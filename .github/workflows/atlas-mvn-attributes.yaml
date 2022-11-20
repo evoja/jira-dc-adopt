@@ -1,0 +1,113 @@
+name: Check module name and version
+on:
+  workflow_call:
+    inputs:
+      java_version:
+        description: Version of JDK to use
+        default: '8'
+        type: string
+      path_to_java:
+        description: A path where the java project is located
+        default: '.'
+        type: string
+      root_proj_name:
+        description: name of the root project that is located in `path_to_java`
+        default: commons
+        type: string
+      path_to_mvn_settings:
+        description: A path to maven settings.xml
+        default: .github/workflows/mvn-settings.xml
+        type: string
+    secrets:
+      GHCR_R_PAT:
+        description: A token that can read from GitHub packages
+    outputs:
+      path:
+        value: ${{jobs.attributes.outputs.path}}
+
+permissions:
+  contents: read
+
+jobs:
+  attributes:
+    name: Check module name and version
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v3.1.0
+
+      - name: Verify module
+        id: proj
+        env:
+          REF: ${{github.ref}}
+          ROOT_PROJ_NAME: ${{inputs.root_proj_name}}
+          PATH_TO_JAVA: ${{inputs.path_to_java}}
+        run: |
+          PROJ="$(echo "$REF" | \
+            sed -E 's|^refs/tags/([^/]*)/.*|\1|')"
+          if [ "$PROJ" == "$ROOT_PROJ_NAME" ]; then
+            PROJ_PATH="$PATH_TO_JAVA"
+          else
+            PROJ_PATH="$PATH_TO_JAVA/$PROJ"
+          fi;
+          echo "PROJ_PATH=$PROJ_PATH"
+          [ -d "$PROJ_PATH" ]
+          echo "path=$PROJ_PATH" >> $GITHUB_OUTPUT
+
+      - uses: actions/setup-java@v3.6.0
+        with:
+          distribution: 'temurin'
+          java-version: ${{inputs.java_version}}
+
+      - name: Install Atlassian SDK
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          curl -L https://marketplace.atlassian.com/download/plugins/atlassian-plugin-sdk-tgz > atlassdk.tar.gz
+          mkdir untar
+          tar -xvzf atlassdk.tar.gz -C untar
+          mv untar/$(ls untar) ~/atlas-sdk
+          rmdir untar
+          echo PATH=$HOME/atlas-sdk/bin:$PATH >> $GITHUB_ENV
+
+      - name: Auth to GitHub Maven
+        env:
+          MVN_SETTINGS: ${{inputs.path_to_mvn_settings}}
+        run: |
+          if [ -f "$MVN_SETTINGS" ]; then
+            mkdir -p ~/.m2
+            cp "$MVN_SETTINGS" ~/.m2/settings.xml
+            echo "::group::copied ~/.m2/settings.xml"
+              cat ~/.m2/settings.xml
+            echo "::endgroup::"
+          else
+            echo "No mvn settings. Nothing to copy."
+          fi
+
+      - name: Verify version
+        env:
+          PROJ_PATH: ${{steps.proj.outputs.path}}
+          REF: ${{github.ref}}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_R_PAT: ${{ secrets.GHCR_R_PAT }}
+        run: |
+          echo "::group::~/.m2/settings.xml"
+          if [ -f "~/.m2/settings.xml" ]; then
+            cat ~/.m2/settings.xml
+          else
+            echo "No mvn settings in ~/.m2"
+          fi
+          echo "::endgroup::"
+
+          cd "$PROJ_PATH"
+          VER="$(echo "$REF" | \
+            sed -E 's|^refs/tags/[^/]*/(.*)|\1|' | \
+            sed -E 's|/|.|g')"
+          echo "VER=$VER"
+          MVN_VER="$(echo "$(atlas-mvn help:evaluate -Dexpression=project.version -pl . --non-recursive -q -DforceStdout)" | tail -n1)"
+          echo "MVN_VER=$MVN_VER"
+          [ "$VER" == "$MVN_VER" ]
+        #          echo "VER=$VER" >> "$GITHUB_ENV"
+
+    outputs:
+      path: ${{steps.proj.outputs.path}}
+

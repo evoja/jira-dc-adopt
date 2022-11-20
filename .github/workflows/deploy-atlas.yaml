@@ -1,0 +1,128 @@
+name: Deploy Atlas-Maven project to registry
+on:
+  workflow_call:
+    inputs:
+      java_version:
+        description: Version of JDK to use
+        default: '8'
+        type: string
+      path_to_java:
+        description: A path where the whole java project is located
+        default: '.'
+        type: string
+      path_to_module:
+        description: A path where the java module is located
+        type: string
+        required: true
+      path_to_mvn_settings:
+        description: A path to maven settings.xml
+        default: .github/workflows/mvn-settings.xml
+        type: string
+      path_to_mvn_output:
+        description: A path where the java packages are installed
+        default: ~/.m2/repository/net/evoja
+        type: string
+    secrets:
+      GHCR_R_PAT:
+        description: A token that can read from GitHub packages for downloading private dependencies.
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  poms_tpl: ${{ format('{0}/**/pom.xml', inputs.path_to_java) }}
+  pom_tpl: ${{ format('{0}/pom.xml', inputs.path_to_java) }}
+
+
+jobs:
+
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      PROJ_PATH: ${{inputs.path_to_module}}
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v3.1.0
+
+      - uses: actions/setup-java@v3.6.0
+        with:
+          distribution: 'temurin'
+          java-version: ${{inputs.java_version}}
+
+      - name: Use cache
+        id: cache
+        uses: actions/cache@v3.0.11
+        with:
+          key: mvndeps-one-${{hashFiles(format('{0}/pom.xml', env.PROJ_PATH))}}
+          restore-keys: |
+            mvndeps-all-${{ hashFiles(env.poms_tpl) }}-${{ hashFiles(env.pom_tpl)}}
+            mvndeps-all-${{ hashFiles(env.poms_tpl) }}
+            mvndeps-all-
+            mvndeps-one-
+            mvndeps-
+          path: |
+            ~/.m2/repository
+            ~/atlas-sdk
+
+      - name: Install Atlassian SDK
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          curl -L https://marketplace.atlassian.com/download/plugins/atlassian-plugin-sdk-tgz > atlassdk.tar.gz
+          mkdir untar
+          tar -xvzf atlassdk.tar.gz -C untar
+          if [ -d ~/atlas-sdk ]; then
+            rm -rf ~/atlas-sdk
+          fi
+          mv untar/$(ls untar) ~/atlas-sdk
+          rmdir untar
+          echo PATH=$HOME/atlas-sdk/bin:$PATH >> $GITHUB_ENV
+
+      - name: Show Atlas SDK and Java versions
+        run: |
+          echo "### Java"
+          java -version
+          echo "JAVA_HOME=$JAVA_HOME"
+          printf "\n### Atlas Maven\n"
+          atlas-version
+
+      - name: Auth to GitHub Maven
+        env:
+          MVN_SETTINGS: ${{inputs.path_to_mvn_settings}}
+        run: |
+          if [ -f "$MVN_SETTINGS" ]; then
+            mkdir -p ~/.m2
+            cp "$MVN_SETTINGS" ~/.m2/settings.xml
+            echo "::group::copied ~/.m2/settings.xml"
+              cat ~/.m2/settings.xml
+            echo "::endgroup::"
+          else
+            echo "No mvn settings. Nothing to copy."
+          fi
+
+      - name: Build and deploy
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_R_PAT: ${{ secrets.GHCR_R_PAT }}
+        run: |
+          echo "::group::~/.m2/settings.xml"
+          if [ -f "~/.m2/settings.xml" ]; then
+            cat ~/.m2/settings.xml
+          else
+            echo "No mvn settings in ~/.m2"
+          fi
+          echo "::endgroup::"
+
+          cd "$PROJ_PATH"
+          atlas-mvn --batch-mode deploy -pl .
+
+      - name: Print test reports
+        run: |
+          cd "$PROJ_PATH"
+          find . -type d  -name surefire-reports -exec sh -c "echo "==============================================================================="  && echo {} && cat {}/*.txt" \;
+
+      - name: Delete our jars before caching maven dependencies
+        env:
+          MVN_OUTPUT: ${{inputs.path_to_mvn_output}}
+        run: |
+          rm -rf "$MVN_OUTPUT"

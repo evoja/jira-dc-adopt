@@ -1,0 +1,192 @@
+name: Check that Atlas-Maven project is buildable
+on:
+  workflow_call:
+    inputs:
+      java_version:
+        description: Version of JDK to use
+        default: '8'
+        type: string
+      path_to_java:
+        description: A path where the java project is located
+        default: '.'
+        type: string
+      path_to_mvn_settings:
+        description: A path to maven settings.xml
+        default: .github/workflows/mvn-settings.xml
+        type: string
+      path_to_mvn_output:
+        description: A path where the java packages are installed
+        default: ~/.m2/repository/net/evoja
+        type: string
+    secrets:
+      GHCR_R_PAT:
+        description: A token that can read from GitHub packages
+env:
+  src_tpl: ${{ format('{0}/*/src/**', inputs.path_to_java) }}
+  poms_tpl: ${{ format('{0}/**/pom.xml', inputs.path_to_java) }}
+  pom_tpl: ${{ format('{0}/pom.xml', inputs.path_to_java) }}
+
+jobs:
+
+  checkingstamps:
+    name: Checking stamps
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v3.1.0
+
+      - name: Calc hash of java project files
+        id: javahash
+        env:
+          JAVA_HASH: ${{ hashFiles(env.src_tpl, env.poms_tpl, env.pom_tpl) }}
+        run: |
+          echo "javahash=$JAVA_HASH" >> $GITHUB_OUTPUT
+
+      - name: Use cache
+        id: cache
+        uses: actions/cache@v3.0.11
+        with:
+          # add `run_attempt` in order to never use cached key
+          key: checkingstamps-check-${{github.run_id}}-${{github.run_attempt}}
+          restore-keys: |
+            checkingstamps-all-${{steps.javahash.outputs.javahash}}
+            checkingstamps-all-
+            checkingstamps-one-
+          path: |
+            .github/.evj-checkingstamps
+
+      - name: Check stamps
+        id: checkstamps
+        env:
+          JAVA_HASH: ${{steps.javahash.outputs.javahash}}
+        run: |
+          if [ -f ".github/.evj-checkingstamps/all-$JAVA_HASH.txt" ]; then
+            echo "checked=1" >> $GITHUB_OUTPUT
+          fi;
+    outputs:
+      checked: ${{steps.checkstamps.outputs.checked}}
+      javahash: ${{steps.javahash.outputs.javahash}}
+
+  report-checked-before:
+    needs: [ checkingstamps ]
+    name: Report that Java build is skipped
+    if: ${{needs.checkingstamps.outputs.checked == 1}}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report
+        run: |
+          echo "Java build is skipped because the same source was checked before."
+
+  build-atlas-mvn:
+    name: Build Atlas-Maven project
+    needs: [ checkingstamps ]
+    if: ${{needs.checkingstamps.outputs.checked != 1}}
+    runs-on: ubuntu-latest
+    permissions:
+      packages: read
+      contents: read
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v3.1.0
+
+      - uses: actions/setup-java@v3.6.0
+        with:
+          distribution: 'temurin'
+          java-version: ${{inputs.java_version}}
+
+      - name: Use cache for checking stamps
+        id: cache-checkingstamps
+        uses: actions/cache@v3.0.11
+        with:
+          key: checkingstamps-all-${{needs.checkingstamps.outputs.javahash}}
+          restore-keys: |
+            checkingstamps-all-
+            checkingstamps-one-
+          path: |
+            .github/.evj-checkingstamps
+
+      - name: Use cache for maven dependencies
+        id: cache
+        uses: actions/cache@v3.0.11
+        with:
+          key: mvndeps-all-${{ hashFiles(env.poms_tpl) }}-${{ hashFiles(env.pom_tpl)}}
+          restore-keys: |
+            mvndeps-all-${{ hashFiles(env.poms_tpl) }}
+            mvndeps-all-
+            mvndeps-one-
+            mvndeps-
+          path: |
+            ~/.m2/repository
+            ~/atlas-sdk
+
+      - name: Install Atlassian SDK
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          curl -L https://marketplace.atlassian.com/download/plugins/atlassian-plugin-sdk-tgz > atlassdk.tar.gz
+          mkdir untar
+          tar -xvzf atlassdk.tar.gz -C untar
+          if [ -d ~/atlas-sdk ]; then
+            rm -rf ~/atlas-sdk
+          fi
+          mv untar/$(ls untar) ~/atlas-sdk
+          rmdir untar
+          echo PATH=$HOME/atlas-sdk/bin:$PATH >> $GITHUB_ENV
+
+      - name: Show Atlas SDK and Java versions
+        run: |
+          echo "### Java"
+          java -version
+          echo "JAVA_HOME=$JAVA_HOME"
+          printf "\n### Atlas Maven\n"
+          atlas-version
+
+      - name: Auth to GitHub Maven
+        env:
+          MVN_SETTINGS: ${{inputs.path_to_mvn_settings}}
+        run: |
+          if [ -f "$MVN_SETTINGS" ]; then
+            mkdir -p ~/.m2
+            cp "$MVN_SETTINGS" ~/.m2/settings.xml
+            echo "::group::copied ~/.m2/settings.xml"
+              cat ~/.m2/settings.xml
+            echo "::endgroup::"
+          else
+            echo "No mvn settings. Nothing to copy."
+          fi
+
+      - name: Build Atlas-Maven project
+        env:
+          PROJ: ${{inputs.path_to_java}}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_R_PAT: ${{ secrets.GHCR_R_PAT }}
+        run: |
+          echo "::group::~/.m2/settings.xml"
+          if [ -f "~/.m2/settings.xml" ]; then
+            cat ~/.m2/settings.xml
+          else
+            echo "No mvn settings in ~/.m2"
+          fi
+          echo "::endgroup::"
+
+          cd "$PROJ"
+          atlas-mvn --batch-mode install
+
+      - name: Print test reports
+        env:
+          PROJ: ${{inputs.path_to_java}}
+        run: |
+          cd "$PROJ"
+          find . -type d  -name surefire-reports -exec sh -c "echo "==============================================================================="  && echo {} && cat {}/*.txt" \;
+
+      - name: Write success stamps
+        env:
+          JAVA_HASH: ${{needs.checkingstamps.outputs.javahash}}
+        run: |
+          mkdir -p .github/.evj-checkingstamps
+          touch ".github/.evj-checkingstamps/all-$JAVA_HASH.txt"
+
+      - name: Delete our jars before caching maven dependencies
+        env:
+          MVN_OUTPUT: ${{inputs.path_to_mvn_output}}
+        run: |
+          rm -rf "$MVN_OUTPUT"
