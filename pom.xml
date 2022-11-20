@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project
+	xmlns="http://maven.apache.org/POM/4.0.0"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd"
+>
+	<modelVersion>4.0.0</modelVersion>
+
+	<groupId>net.evoja.jira-dc-adopt</groupId>
+	<artifactId>net.evoja.jira.dc.adopt</artifactId>
+	<version>9.3.1</version>
+
+	<properties>
+		<jira.version>9.3.1</jira.version>
+	</properties>
+
+	<build>
+		<plugins>
+
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-shade-plugin</artifactId>
+				<version>3.2.4</version>
+				<executions>
+					<execution>
+						<phase>package</phase>
+						<goals>
+							<goal>shade</goal>
+						</goals>
+					</execution>
+				</executions>
+				<configuration>
+					<createDependencyReducedPom>false</createDependencyReducedPom>
+					<filters>
+						<filter>
+							<artifact>*:*</artifact>
+							<includes>
+								<include>com/atlassian/**/*</include>
+								<include>org/joda/time/**/*</include>
+							</includes>
+							<excludes>
+								<excludeScope>system</excludeScope>
+								<exclude>*.class</exclude>
+								<exclude>META-INF/services/*</exclude>
+								<exclude>META-INF/*.SF</exclude>
+								<exclude>META-INF/*.DSA</exclude>
+								<exclude>META-INF/*.RSA</exclude>
+								<!--                                <excludeGroupIds>junit,org.mockito,org.hamcrest</excludeGroupIds>-->
+								<!--                                <exclude>META-INF/DEPENDENCIES</exclude>-->
+								<!--                                <exclude>META-INF/DEPENDENCIES.*</exclude>-->
+								<!--                                <exclude>META-INF/NOTICE</exclude>-->
+								<!--                                <exclude>META-INF/NOTICE.*</exclude>-->
+								<!--                                <exclude>META-INF/README</exclude>-->
+								<!--                                <exclude>META-INF/README.*</exclude>-->
+								<!--                                <exclude>META-INF/LICENSE</exclude>-->
+								<!--                                <exclude>META-INF/LICENSE.*</exclude>-->
+								<!--                                <exclude>META-INF/license/LICENSE.*</exclude>-->
+							</excludes>
+						</filter>
+					</filters>
+				</configuration>
+			</plugin>
+			<plugin>
+				<groupId>com.github.carlomorelli</groupId>
+				<artifactId>licensescan-maven-plugin</artifactId>
+				<executions>
+					<execution>
+						<phase>none</phase>
+					</execution>
+				</executions>
+			</plugin>
+		</plugins>
+	</build>
+
+
+	<distributionManagement>
+		<repository>
+			<id>github</id>
+			<name>GitHub Evoja Commons</name>
+			<url>https://maven.pkg.github.com/evoja/jira-dc-adopt</url>
+		</repository>
+	</distributionManagement>
+
+	<dependencies>
+		<dependency>
+			<!-- is required for com.atlassian.jira.issue.* and other things -->
+			<!-- can be provided by com.atlassian.jira:jira-core -->
+			<!-- contains commons-io:commons-io -->
+			<groupId>com.atlassian.jira</groupId>
+			<artifactId>jira-api</artifactId>
+			<version>${jira.version}</version>
+			<scope>compile</scope>
+			<!--            <scope>provided</scope>-->
+		</dependency>
+		<dependency>
+			<!-- Add dependency on jira-core if you want access to JIRA implementation classes as well as the sanctioned API. -->
+			<!-- This is not normally recommended, but may be required eg when migrating a plugin originally developed against JIRA 4.x -->
+			<!-- -->
+			<!-- required for WebResourceModuleDescriptor from com.atlassian.plugins:atlassian-plugins-webresource (ResourcesListBuilder.java) -->
+			<!-- required for AbstractModuleDescriptor from com.atlassian.plugins:atlassian-plugins-core (ResourcesListBuilder.java) -->
+			<groupId>com.atlassian.jira</groupId>
+			<artifactId>jira-core</artifactId>
+			<version>${jira.version}</version>
+			<scope>compile</scope>
+			<!--            <scope>provided</scope>-->
+		</dependency>
+	</dependencies>
+</project>
