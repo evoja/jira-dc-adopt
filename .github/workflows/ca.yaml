@@ -1,0 +1,24 @@
+name: Test
+on:
+  push:
+    branches:
+      - '**'
+
+permissions:
+  contents: read
+
+jobs:
+
+  editorconfig-checker:
+    name: ec
+    uses: evoja/java-commons/.github/workflows/editorconfig-checker.yaml@5c9da1c159dc3a0dc1d4e07a2d3ddc28b8c28ed9 # same as @wf/editorconfig-checker/04
+
+  ca-atlas:
+    name: ca-atl
+    uses: evoja/jira-dc-adopt/.github/workflows/ca-atlas.yaml@a02c345105e3b7c6e8380478a29c9dcd4a52239e
+    with:
+      java_version: '8'
+      path_to_java: '.'
+    permissions:
+      packages: read
+      contents: read
